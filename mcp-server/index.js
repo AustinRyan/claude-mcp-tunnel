@@ -68,9 +68,74 @@ async function exposeLocaltunnel(port) {
 }
 
 /**
- * Smart tunnel creation. Tries bore first (fast, no interstitial), then
- * localtunnel (pure Node.js, works in sandboxes but has interstitial page),
- * then SSH, then local IP.
+ * Create a public tunnel using cloudflared (Cloudflare Tunnel).
+ * Uses trycloudflare.com domain which ISPs/security software do NOT block.
+ * No account needed. Requires cloudflared binary installed.
+ */
+async function exposeCloudflared(port) {
+  log(`[tunnel] Trying cloudflared for port ${port}...`);
+
+  // Check if cloudflared is installed
+  try {
+    require("child_process").execSync("which cloudflared", { stdio: "pipe" });
+  } catch {
+    throw new Error("cloudflared not installed. Install: brew install cloudflared");
+  }
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${port}`], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let output = "";
+    const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+    let resolved = false;
+
+    const onData = (chunk) => {
+      output += chunk.toString();
+      const match = output.match(urlRegex);
+      if (match && !resolved) {
+        resolved = true;
+        managedBackends.push(proc);
+        resolve({
+          url: match[0],
+          backend: "cloudflare",
+          port,
+          process: proc,
+        });
+      }
+    };
+
+    proc.stdout.on("data", onData);
+    proc.stderr.on("data", onData);
+
+    proc.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error(`cloudflared failed to start: ${err.message}`));
+      }
+    });
+
+    proc.on("exit", (code) => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error(`cloudflared exited with code ${code}`));
+      }
+    });
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        proc.kill();
+        reject(new Error("cloudflared timed out after 15 seconds"));
+      }
+    }, 15000);
+  });
+}
+
+/**
+ * Smart tunnel creation. Tries cloudflared first (ISP-safe, trusted domain),
+ * then bore, then localtunnel, then SSH, then local IP.
  * If a specific backend is requested, uses that directly.
  */
 async function smartExpose(port, preferredBackend) {
@@ -78,17 +143,27 @@ async function smartExpose(port, preferredBackend) {
   if (preferredBackend === "bore" || preferredBackend === "ssh" || preferredBackend === "local") {
     return devgate.autoExpose(port, preferredBackend);
   }
-
+  if (preferredBackend === "cloudflare") {
+    return exposeCloudflared(port);
+  }
   if (preferredBackend === "localtunnel") {
     const result = await exposeLocaltunnel(port);
     result.note = "localtunnel URLs show a 'Friendly Reminder' page on first visit — click 'Click to Continue' to access the app.";
     return result;
   }
 
-  // Auto mode: bore → localtunnel → SSH → local IP
+  // Auto mode: cloudflared → bore → localtunnel → SSH → local IP
   const errors = [];
 
-  // 1. Try bore (fastest, no interstitial)
+  // 1. Try cloudflared (trusted domain, ISPs don't block trycloudflare.com)
+  try {
+    return await exposeCloudflared(port);
+  } catch (err) {
+    log(`[tunnel] cloudflared failed: ${err.message}`);
+    errors.push(`cloudflared: ${err.message}`);
+  }
+
+  // 2. Try bore (fast, no interstitial)
   try {
     log("[tunnel] Trying bore...");
     return await devgate.autoExpose(port, "bore");
@@ -97,7 +172,7 @@ async function smartExpose(port, preferredBackend) {
     errors.push(`bore: ${err.message}`);
   }
 
-  // 2. Try localtunnel (pure Node.js, works in sandboxes)
+  // 3. Try localtunnel (pure Node.js, works in sandboxes)
   try {
     const result = await exposeLocaltunnel(port);
     result.errors = errors;
@@ -108,7 +183,7 @@ async function smartExpose(port, preferredBackend) {
     errors.push(`localtunnel: ${err.message}`);
   }
 
-  // 3. Try SSH (localhost.run)
+  // 4. Try SSH (localhost.run)
   try {
     log("[tunnel] Trying SSH (localhost.run)...");
     const result = await devgate.autoExpose(port, "ssh");
@@ -119,7 +194,7 @@ async function smartExpose(port, preferredBackend) {
     errors.push(`ssh: ${err.message}`);
   }
 
-  // 4. Ultimate fallback: local IP
+  // 5. Ultimate fallback: local IP
   const localResult = devgate.exposeLocal(port);
   localResult.fallback = true;
   localResult.errors = errors;
@@ -269,10 +344,10 @@ server.tool(
       .number()
       .describe("The local port number to expose (e.g., 3000, 8080)."),
     backend: z
-      .enum(["localtunnel", "bore", "ssh", "local"])
+      .enum(["cloudflare", "localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
-        'Tunnel backend. "localtunnel" is the default (public HTTPS URL, no install needed, works in sandboxed environments). "bore" requires bore-cli. "ssh" uses localhost.run. "local" returns local IP (same WiFi only). If omitted, auto-selects best available.',
+        'Tunnel backend. Default auto-selects best available. "cloudflare" uses Cloudflare Tunnel (HTTPS, ISP-safe, requires cloudflared). "localtunnel" is pure Node.js. "bore" requires bore-cli. "ssh" uses localhost.run. "local" returns local IP (same WiFi only).',
       ),
   },
   async ({ port, backend }) => {
@@ -338,10 +413,10 @@ server.tool(
         "Port to start the dev server on. If omitted, uses the framework's default port.",
       ),
     backend: z
-      .enum(["localtunnel", "bore", "ssh", "local"])
+      .enum(["cloudflare", "localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
-        "Tunnel backend. Defaults to localtunnel (public HTTPS, works everywhere). Options: localtunnel, bore, ssh, local.",
+        "Tunnel backend. Default auto-selects best available. cloudflare is preferred (HTTPS, ISP-safe). Options: cloudflare, localtunnel, bore, ssh, local.",
       ),
   },
   async ({ dir, port, backend }) => {
@@ -481,7 +556,7 @@ server.tool(
         "Port the frontend dev server will listen on. Use this when the project's config (e.g. vite.config.js) specifies a non-default port. Does not override the start command — just tells devgate which port to wait for and expose.",
       ),
     backend: z
-      .enum(["localtunnel", "bore", "ssh", "local"])
+      .enum(["cloudflare", "localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
         "Tunnel backend for the frontend. Defaults to localtunnel (public HTTPS, works everywhere). Options: localtunnel, bore, ssh, local.",
