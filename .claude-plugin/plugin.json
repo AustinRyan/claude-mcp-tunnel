@@ -1,0 +1,10 @@
+{
+  "name": "claude-mcp-tunnel",
+  "description": "MCP server that exposes local dev servers to your phone via Claude Desktop. Auto-detects framework, starts server, creates tunnel, shows QR code.",
+  "version": "1.0.0",
+  "author": {
+    "name": "AustinRyan"
+  },
+  "keywords": ["tunnel", "localhost", "mobile", "dev-server", "expose", "qr-code"],
+  "skills": "./skills/"
+}
