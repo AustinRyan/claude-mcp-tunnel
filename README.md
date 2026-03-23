@@ -23,7 +23,28 @@ It also ships as a standalone CLI (`npx claude-mcp-tunnel`) for use without Clau
 
 ## Quick Start — MCP Server (Claude Desktop)
 
-### 1. Clone and install
+### Option A: Install via npm (easiest)
+
+```bash
+npm install -g claude-mcp-tunnel
+```
+
+Then add to your Claude Desktop config:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "claude-mcp-tunnel": {
+      "command": "claude-mcp-tunnel-server"
+    }
+  }
+}
+```
+
+### Option B: Clone from GitHub
 
 ```bash
 git clone https://github.com/AustinRyan/claude-mcp-tunnel.git
@@ -31,14 +52,7 @@ cd claude-mcp-tunnel
 npm install
 ```
 
-### 2. Add to Claude Desktop
-
-Open your Claude Desktop config:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add the `mcpServers` entry (create the file if it doesn't exist):
+Then add to your Claude Desktop config:
 
 ```json
 {
@@ -51,13 +65,23 @@ Add the `mcpServers` entry (create the file if it doesn't exist):
 }
 ```
 
-Replace `/absolute/path/to/claude-mcp-tunnel` with the actual path where you cloned the repo.
+Replace `/absolute/path/to/claude-mcp-tunnel` with where you cloned the repo.
 
-### 3. Restart Claude Desktop
+### Install cloudflared (required for public tunnels)
+
+```bash
+# macOS
+brew install cloudflared
+
+# Linux
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+```
+
+### Restart Claude Desktop
 
 Close and reopen Claude Desktop. The tools will appear automatically.
 
-### 4. Use it
+### Use it
 
 In Claude Desktop, say:
 

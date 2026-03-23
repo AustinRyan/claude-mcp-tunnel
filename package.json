@@ -5,20 +5,29 @@
   "author": "AustinRyan",
   "license": "MIT",
   "bin": {
-    "devgate": "./bin/devgate.js"
+    "claude-mcp-tunnel": "./bin/devgate.js",
+    "claude-mcp-tunnel-server": "./mcp-server/index.js"
   },
   "main": "./src/index.js",
+  "files": [
+    "bin/",
+    "src/",
+    "mcp-server/",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
+    "mcp",
+    "claude",
     "tunnel",
+    "cloudflare",
     "localhost",
     "expose",
     "dev-server",
     "mobile",
-    "qr-code",
-    "bore",
     "ngrok-alternative",
-    "claude-code",
-    "mcp"
+    "model-context-protocol",
+    "claude-desktop"
   ],
   "scripts": {
     "start": "node bin/devgate.js",
