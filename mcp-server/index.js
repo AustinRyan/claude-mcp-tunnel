@@ -68,8 +68,9 @@ async function exposeLocaltunnel(port) {
 }
 
 /**
- * Smart tunnel creation: tries localtunnel first (works in sandboxed environments
- * like Claude Desktop), then falls back to the core engine (bore → SSH → local IP).
+ * Smart tunnel creation. Tries bore first (fast, no interstitial), then
+ * localtunnel (pure Node.js, works in sandboxes but has interstitial page),
+ * then SSH, then local IP.
  * If a specific backend is requested, uses that directly.
  */
 async function smartExpose(port, preferredBackend) {
@@ -79,28 +80,46 @@ async function smartExpose(port, preferredBackend) {
   }
 
   if (preferredBackend === "localtunnel") {
-    return exposeLocaltunnel(port);
+    const result = await exposeLocaltunnel(port);
+    result.note = "localtunnel URLs show a 'Friendly Reminder' page on first visit — click 'Click to Continue' to access the app.";
+    return result;
   }
 
-  // Auto mode: try localtunnel first (works in sandbox), then core backends
+  // Auto mode: bore → localtunnel → SSH → local IP
   const errors = [];
 
+  // 1. Try bore (fastest, no interstitial)
   try {
-    return await exposeLocaltunnel(port);
+    log("[tunnel] Trying bore...");
+    return await devgate.autoExpose(port, "bore");
+  } catch (err) {
+    log(`[tunnel] bore failed: ${err.message}`);
+    errors.push(`bore: ${err.message}`);
+  }
+
+  // 2. Try localtunnel (pure Node.js, works in sandboxes)
+  try {
+    const result = await exposeLocaltunnel(port);
+    result.errors = errors;
+    result.note = "localtunnel URLs show a 'Friendly Reminder' page on first visit — click 'Click to Continue' to access the app.";
+    return result;
   } catch (err) {
     log(`[tunnel] localtunnel failed: ${err.message}`);
     errors.push(`localtunnel: ${err.message}`);
   }
 
+  // 3. Try SSH (localhost.run)
   try {
-    const result = await devgate.autoExpose(port, null);
-    result.errors = [...errors, ...(result.errors || [])];
+    log("[tunnel] Trying SSH (localhost.run)...");
+    const result = await devgate.autoExpose(port, "ssh");
+    result.errors = errors;
     return result;
   } catch (err) {
-    errors.push(`core: ${err.message}`);
+    log(`[tunnel] SSH failed: ${err.message}`);
+    errors.push(`ssh: ${err.message}`);
   }
 
-  // Ultimate fallback: local IP
+  // 4. Ultimate fallback: local IP
   const localResult = devgate.exposeLocal(port);
   localResult.fallback = true;
   localResult.errors = errors;
@@ -286,6 +305,7 @@ server.tool(
               port: tunnel.port,
               local_ip: localIP,
               fallback: tunnel.fallback || false,
+              note: tunnel.note || null,
               errors: tunnel.errors || [],
             },
             null,
@@ -418,6 +438,7 @@ server.tool(
               local_ip: localIP,
               already_running: serverResult.alreadyRunning || false,
               fallback: tunnel.fallback || false,
+              note: tunnel.note || null,
               errors: tunnel.errors || [],
             },
             null,
@@ -662,6 +683,7 @@ server.tool(
           local_frontend: `http://${localIP}:${actualFrontendPort}`,
           local_backend: `http://${localIP}:${backend_port}`,
           fallback: tunnel.fallback || false,
+          note: tunnel.note || null,
         }, null, 2),
       }],
     };
