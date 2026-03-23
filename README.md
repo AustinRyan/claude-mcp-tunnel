@@ -6,6 +6,8 @@ Text Claude from your phone: *"Start my project and give me a link"* — get bac
 
 Zero accounts. Zero config. Works with 25+ frameworks.
 
+[![claude-mcp-tunnel MCP server](https://glama.ai/mcp/servers/AustinRyan/claude-mcp-tunnel/badges/card.svg)](https://glama.ai/mcp/servers/AustinRyan/claude-mcp-tunnel)
+
 ---
 
 ## What Is This?
