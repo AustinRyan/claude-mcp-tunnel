@@ -1,0 +1,43 @@
+{
+  "name": "claude-mcp-tunnel",
+  "display_name": "claude-mcp-tunnel",
+  "description": "MCP server that detects project frameworks (25+), starts dev servers, and creates public Cloudflare tunnels from a single tool call. Text Claude via Dispatch from your phone and get back a working HTTPS URL accessible from anywhere.",
+  "repository": "https://github.com/AustinRyan/claude-mcp-tunnel",
+  "homepage": "https://www.npmjs.com/package/claude-mcp-tunnel",
+  "license": "MIT",
+  "author": {
+    "name": "AustinRyan"
+  },
+  "categories": ["Developer Tools", "App Automation", "Code Execution"],
+  "tags": ["tunnel", "cloudflare", "mcp", "claude", "dev-server", "localhost", "dispatch"],
+  "tools": [
+    {
+      "name": "scan_ports",
+      "description": "Scan common dev ports for running servers"
+    },
+    {
+      "name": "detect_project",
+      "description": "Detect project framework from directory"
+    },
+    {
+      "name": "expose_port",
+      "description": "Expose a running port via public tunnel, return URL"
+    },
+    {
+      "name": "start_and_expose",
+      "description": "Full pipeline: detect, install deps, start server, tunnel, return URL"
+    },
+    {
+      "name": "start_full_stack",
+      "description": "Start backend + frontend, expose frontend via tunnel"
+    },
+    {
+      "name": "stop_tunnels",
+      "description": "Kill all active tunnels and servers"
+    },
+    {
+      "name": "get_status",
+      "description": "Show active tunnels, ports, and URLs"
+    }
+  ]
+}
