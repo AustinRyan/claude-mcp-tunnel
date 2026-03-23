@@ -12,10 +12,13 @@ const { z } = require("zod");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 
+const localtunnel = require("localtunnel");
 const devgate = require("../src/index.js");
 
 // Track manually spawned backend processes (outside core engine)
 const managedBackends = [];
+// Track active localtunnel instances for cleanup
+const activeLtTunnels = [];
 
 const log = (...args) => process.stderr.write(args.join(" ") + "\n");
 
@@ -39,6 +42,69 @@ async function waitForPortAny(port, timeout = 45000, interval = 500) {
     await new Promise((r) => setTimeout(r, interval));
   }
   return false;
+}
+
+/**
+ * Create a public tunnel using localtunnel (pure Node.js, no subprocess).
+ * Works inside Claude Desktop's sandbox where bore/SSH cannot.
+ */
+async function exposeLocaltunnel(port) {
+  log(`[tunnel] Trying localtunnel for port ${port}...`);
+  const tunnel = await localtunnel({ port });
+  activeLtTunnels.push(tunnel);
+  tunnel.on("error", (err) => {
+    log(`[tunnel] localtunnel error: ${err.message}`);
+  });
+  tunnel.on("close", () => {
+    const idx = activeLtTunnels.indexOf(tunnel);
+    if (idx !== -1) activeLtTunnels.splice(idx, 1);
+  });
+  return {
+    url: tunnel.url,
+    backend: "localtunnel",
+    port,
+    process: null,
+  };
+}
+
+/**
+ * Smart tunnel creation: tries localtunnel first (works in sandboxed environments
+ * like Claude Desktop), then falls back to the core engine (bore → SSH → local IP).
+ * If a specific backend is requested, uses that directly.
+ */
+async function smartExpose(port, preferredBackend) {
+  // If user explicitly requested a specific backend, honor it
+  if (preferredBackend === "bore" || preferredBackend === "ssh" || preferredBackend === "local") {
+    return devgate.autoExpose(port, preferredBackend);
+  }
+
+  if (preferredBackend === "localtunnel") {
+    return exposeLocaltunnel(port);
+  }
+
+  // Auto mode: try localtunnel first (works in sandbox), then core backends
+  const errors = [];
+
+  try {
+    return await exposeLocaltunnel(port);
+  } catch (err) {
+    log(`[tunnel] localtunnel failed: ${err.message}`);
+    errors.push(`localtunnel: ${err.message}`);
+  }
+
+  try {
+    const result = await devgate.autoExpose(port, null);
+    result.errors = [...errors, ...(result.errors || [])];
+    return result;
+  } catch (err) {
+    errors.push(`core: ${err.message}`);
+  }
+
+  // Ultimate fallback: local IP
+  const localResult = devgate.exposeLocal(port);
+  localResult.fallback = true;
+  localResult.errors = errors;
+  return localResult;
 }
 
 // ============================================================================
@@ -178,22 +244,22 @@ server.tool(
 
 server.tool(
   "expose_port",
-  "Expose a running local port via a public tunnel so it can be accessed from your phone or any device. Uses bore (fastest) -> localhost.run (SSH, zero-install) -> local IP (same WiFi) fallback chain. Returns the public URL.",
+  "Expose a running local port via a public tunnel so it can be accessed from your phone or any device. Returns a public HTTPS URL accessible from anywhere, not just local WiFi.",
   {
     port: z
       .number()
       .describe("The local port number to expose (e.g., 3000, 8080)."),
     backend: z
-      .enum(["bore", "ssh", "local"])
+      .enum(["localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
-        'Tunnel backend to use. "bore" requires bore-cli installed, "ssh" uses localhost.run (zero install), "local" returns local network IP (same WiFi only). If omitted, auto-selects the best available backend.',
+        'Tunnel backend. "localtunnel" is the default (public HTTPS URL, no install needed, works in sandboxed environments). "bore" requires bore-cli. "ssh" uses localhost.run. "local" returns local IP (same WiFi only). If omitted, auto-selects best available.',
       ),
   },
   async ({ port, backend }) => {
     log(`[expose_port] Exposing port ${port} via ${backend || "auto"}...`);
 
-    const isOpen = await devgate.checkPort(port);
+    const isOpen = await checkPortAny(port);
     if (!isOpen) {
       return {
         content: [
@@ -206,7 +272,7 @@ server.tool(
       };
     }
 
-    const tunnel = await devgate.autoExpose(port, backend || null);
+    const tunnel = await smartExpose(port, backend || null);
     const localIP = devgate.getLocalIP();
 
     return {
@@ -237,7 +303,7 @@ server.tool(
 
 server.tool(
   "start_and_expose",
-  "Full pipeline: detect the project framework, install dependencies if needed, start the dev server, create a public tunnel, and return the URL. This is the primary tool — use it when someone says 'start my project and give me a link'.",
+  "Full pipeline: detect the project framework, install dependencies if needed, start the dev server, create a public tunnel, and return the URL. This is the primary tool — use it when someone says 'start my project and give me a link'. Returns a public HTTPS URL accessible from anywhere.",
   {
     dir: z
       .string()
@@ -252,10 +318,10 @@ server.tool(
         "Port to start the dev server on. If omitted, uses the framework's default port.",
       ),
     backend: z
-      .enum(["bore", "ssh", "local"])
+      .enum(["localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
-        "Tunnel backend to use. If omitted, auto-selects the best available.",
+        "Tunnel backend. Defaults to localtunnel (public HTTPS, works everywhere). Options: localtunnel, bore, ssh, local.",
       ),
   },
   async ({ dir, port, backend }) => {
@@ -321,7 +387,7 @@ server.tool(
     log("[start_and_expose] Creating tunnel...");
     let tunnel;
     try {
-      tunnel = await devgate.autoExpose(serverResult.port, backend || null);
+      tunnel = await smartExpose(serverResult.port, backend || null);
     } catch (err) {
       return {
         content: [
@@ -394,10 +460,10 @@ server.tool(
         "Port the frontend dev server will listen on. Use this when the project's config (e.g. vite.config.js) specifies a non-default port. Does not override the start command — just tells devgate which port to wait for and expose.",
       ),
     backend: z
-      .enum(["bore", "ssh", "local"])
+      .enum(["localtunnel", "bore", "ssh", "local"])
       .optional()
       .describe(
-        "Tunnel backend to use for the frontend. If omitted, auto-selects the best available.",
+        "Tunnel backend for the frontend. Defaults to localtunnel (public HTTPS, works everywhere). Options: localtunnel, bore, ssh, local.",
       ),
   },
   async ({ dir, frontend_dir, backend_cmd, backend_port, frontend_port, backend }) => {
@@ -567,7 +633,7 @@ server.tool(
     log("[start_full_stack] Creating tunnel for frontend...");
     let tunnel;
     try {
-      tunnel = await devgate.autoExpose(actualFrontendPort, backend || null);
+      tunnel = await smartExpose(actualFrontendPort, backend || null);
     } catch (err) {
       return {
         content: [{
@@ -615,6 +681,13 @@ server.tool(
     const tunnelsKilled = devgate.killAllTunnels();
     const serversKilled = devgate.killAllServers();
 
+    // Close localtunnel instances
+    for (const lt of activeLtTunnels) {
+      try { lt.close(); } catch {}
+    }
+    const ltClosed = activeLtTunnels.length;
+    activeLtTunnels.length = 0;
+
     // Also kill manually managed backend processes
     let backendsKilled = 0;
     for (const proc of managedBackends) {
@@ -624,7 +697,7 @@ server.tool(
     }
     managedBackends.length = 0;
 
-    const total = tunnelsKilled + serversKilled + backendsKilled;
+    const total = tunnelsKilled + ltClosed + serversKilled + backendsKilled;
 
     return {
       content: [
@@ -632,7 +705,7 @@ server.tool(
           type: "text",
           text: JSON.stringify(
             {
-              tunnels_stopped: tunnelsKilled,
+              tunnels_stopped: tunnelsKilled + ltClosed,
               servers_stopped: serversKilled + backendsKilled,
               message:
                 total > 0
@@ -658,7 +731,19 @@ server.tool(
   async () => {
     log("[get_status] Fetching status...");
 
-    const tunnels = devgate.getActiveTunnels();
+    const coreTunnels = devgate.getActiveTunnels();
+    const ltTunnels = activeLtTunnels.map((lt) => ({
+      url: lt.url,
+      port: lt.tunnelCluster?.opts?.local_port || null,
+      backend: "localtunnel",
+      pid: null,
+    }));
+    const allTunnels = [...coreTunnels.map((t) => ({
+      url: t.url,
+      port: t.port,
+      backend: t.backend,
+      pid: t.process ? t.process.pid : null,
+    })), ...ltTunnels];
     const localIP = devgate.getLocalIP();
 
     return {
@@ -667,14 +752,9 @@ server.tool(
           type: "text",
           text: JSON.stringify(
             {
-              active_tunnels: tunnels.map((t) => ({
-                url: t.url,
-                port: t.port,
-                backend: t.backend,
-                pid: t.process ? t.process.pid : null,
-              })),
+              active_tunnels: allTunnels,
               local_ip: localIP,
-              tunnel_count: tunnels.length,
+              tunnel_count: allTunnels.length,
             },
             null,
             2,
@@ -693,6 +773,10 @@ function cleanup() {
   log("[devgate] Cleaning up tunnels and servers...");
   devgate.killAllTunnels();
   devgate.killAllServers();
+  for (const lt of activeLtTunnels) {
+    try { lt.close(); } catch {}
+  }
+  activeLtTunnels.length = 0;
   for (const proc of managedBackends) {
     if (proc && !proc.killed) {
       try { proc.kill("SIGTERM"); } catch {}
