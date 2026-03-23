@@ -183,23 +183,15 @@ Auto-selects the best available backend. No accounts required for any of them.
 
 | Backend | Speed | Install Required | Access |
 |---------|-------|------------------|--------|
+| **Cloudflare Tunnel** | Fast | `brew install cloudflared` | Public HTTPS (anywhere) |
 | **bore** | Fast | `brew install bore-cli` | Public (anywhere) |
+| **localtunnel** | Good | None (pure Node.js) | Public (anywhere) |
 | **localhost.run** | Good | None (uses SSH) | Public (anywhere) |
 | **Local IP** | Instant | None | Same WiFi only |
 
-Fallback order: bore → localhost.run → local IP.
+Fallback order: Cloudflare → bore → localtunnel → localhost.run → local IP.
 
-### Installing bore (optional, for fastest tunnels)
-
-```bash
-# macOS
-brew install bore-cli
-
-# Any OS with Rust
-cargo install bore-cli
-```
-
-bore is optional. localhost.run uses SSH which is already on your machine.
+Cloudflare Tunnel is recommended — it produces HTTPS URLs on a trusted domain (`trycloudflare.com`) that ISPs and security software won't block.
 
 ---
 
@@ -227,9 +219,9 @@ Your Phone                    Your Computer
     │                              │  1. Detects framework (Vite)
     │                              │  2. Installs deps (npm install)
     │                              │  3. Starts server (npm run dev)
-    │                              │  4. Creates tunnel (bore/SSH)
+    │                              │  4. Creates Cloudflare tunnel
     │                              │
-    │    https://abc123.lhr.life   │
+    │  https://xyz.trycloudflare.com
     │<─────────────────────────────│
     │                              │
     │  Open URL on phone           │
@@ -268,10 +260,12 @@ tunnel.killAllServers();
 
 | Problem | Solution |
 |---------|----------|
-| Tools don't appear in Claude Desktop | Check the path in config is absolute and correct. Restart Claude Desktop. |
-| "Cannot find module" errors | Run `npm install` in the claude-mcp-tunnel directory. |
-| Tunnel fails, only local IP works | bore not installed and SSH blocked. Your phone needs same WiFi for local IP. |
-| Server starts but wrong port | Check your project's config (e.g. `vite.config.js`) for hardcoded ports. Pass the correct port. |
+| Tools don't appear in Claude Desktop | Restart Claude Desktop. If using npm, verify `claude-mcp-tunnel-server` is in your PATH (`which claude-mcp-tunnel-server`). |
+| "Cannot find module" errors | Run `npm install -g claude-mcp-tunnel` to reinstall, or `npm install` if using the cloned repo. |
+| Tunnel URL blocked by ISP | Install cloudflared (`brew install cloudflared`). Cloudflare Tunnel uses `trycloudflare.com` which ISPs trust. |
+| Vite "host not allowed" error | Add `server: { allowedHosts: true }` to your `vite.config.js`. |
+| Tunnel fails, only local IP works | Install cloudflared. Without it, falls back to bore → localtunnel → SSH → local IP. |
+| Server starts but wrong port | Check your project's config (e.g. `vite.config.js`) for hardcoded ports. Pass the correct port via `frontend_port`. |
 | MCP server crashes silently | Check Claude Desktop's MCP logs. Server logs go to stderr. |
 
 ---
